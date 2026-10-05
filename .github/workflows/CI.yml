@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Julia ${{ matrix.julia-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        julia-version: ['1.10', '1']
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - julia-version: '1.11'
+            os: ubuntu-latest
+          - julia-version: '1.12'
+            os: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: ${{ matrix.julia-version }}
+      - uses: julia-actions/cache@v3
+      - uses: julia-actions/julia-runtest@v1
+        with:
+          coverage: true
+
+  minimum-dependencies:
+    name: Minimum dependencies on Julia 1.10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1.10'
+      - uses: julia-actions/cache@v3
+      - name: Test declared minimum dependency versions
+        shell: julia --color=yes --project {0}
+        run: |
+          using Pkg
+          Pkg.add([
+              PackageSpec(name="HTTP", version="2.6.7"),
+              PackageSpec(name="JSON", version="1.8.0"),
+              PackageSpec(name="ScopedValues", version="1.6.2"),
+          ])
+          Pkg.test(; allow_reresolve=false)
