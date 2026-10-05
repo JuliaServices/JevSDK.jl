@@ -85,6 +85,7 @@ On a non-2xx response, `JevSDK.APIError` retains `status`, raw response `body`,
 `request_id`, and `retry_after`. This includes authentication failures (401), validation
 errors (422), rate limits (429), and overload (529). The caller can use those fields
 to implement backoff. HTTP transport errors propagate unchanged.
+Boolean JSON tokens in numeric answer or token-count fields raise `ArgumentError`.
 
 Client display hides the API key. Error display omits response bodies; inspect
 `err.body` explicitly when needed. Never log client fields or authorization headers.

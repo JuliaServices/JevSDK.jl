@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Reject Boolean JSON tokens in numeric answer and token-count fields before conversion.
+  Numeric zero and one remain valid; Boolean state, criteria, and metadata remain unchanged.
+
 ## 1.0.0
 
 Initial public release of JevSDK.jl, based on the local TypeSafeAI prototype.

@@ -57,23 +57,34 @@ end
 
 abstract type Answer end
 
+# Bool is numeric in Julia; reject it before the JSON decoder converts field values.
+_reject_boolean(value) = value isa Bool ?
+    throw(ArgumentError("Boolean JSON tokens are not valid numeric response values")) : nothing
+_numeric_type(type, x) = (_reject_boolean(x[]); type)
+function _probabilities_type(x)
+    JSON.StructUtils.applyeach(x) do _, value
+        _reject_boolean(value[])
+    end
+    return Dict{String,Float64}
+end
+
 """A yes/no probability in `noul`, from zero to one."""
-struct NoulAnswer <: Answer
-    noul::Float64
+@tags struct NoulAnswer <: Answer
+    noul::Float64 &(choosetype=x -> _numeric_type(Float64, x),)
 end
 
 """The selected label, its confidence, and probabilities for all labels."""
-struct ChoiceAnswer <: Answer
+@tags struct ChoiceAnswer <: Answer
     choice::String
-    confidence::Float64
-    probabilities::Dict{String,Float64}
+    confidence::Float64 &(choosetype=x -> _numeric_type(Float64, x),)
+    probabilities::Dict{String,Float64} &(choosetype=_probabilities_type,)
 end
 
 """A weighted score, confidence, and rubric/probabilities keyed by zero-based strings."""
-struct ScoreAnswer <: Answer
-    score::Float64
-    confidence::Float64
-    probabilities::Dict{String,Float64}
+@tags struct ScoreAnswer <: Answer
+    score::Float64 &(choosetype=x -> _numeric_type(Float64, x),)
+    confidence::Float64 &(choosetype=x -> _numeric_type(Float64, x),)
+    probabilities::Dict{String,Float64} &(choosetype=_probabilities_type,)
     legend::Dict{String,Any}
 end
 
@@ -87,8 +98,8 @@ JSON.@choosetype Answer x -> _answer_type(x.type[])
 
 """Token counts, or `nothing` if the API does not report them."""
 @kwarg struct Usage
-    input_tokens::Union{Int,Nothing} = nothing
-    output_tokens::Union{Int,Nothing} = nothing
+    input_tokens::Union{Int,Nothing} = nothing &(choosetype=x -> _numeric_type(Union{Int,Nothing}, x),)
+    output_tokens::Union{Int,Nothing} = nothing &(choosetype=x -> _numeric_type(Union{Int,Nothing}, x),)
 end
 
 """Typed answers keyed by question ID, with model and token usage."""
@@ -212,6 +223,7 @@ end
 
 Evaluate questions in one POST to `/v1/systemone`. No automatic retries.
 Throws `APIError` on non-2xx responses; HTTP transport errors propagate unchanged.
+Boolean JSON tokens in numeric response fields throw `ArgumentError` before conversion.
 """
 function system_one(client::Client, request::SystemOneRequest)
     _validate(request)

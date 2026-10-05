@@ -49,6 +49,50 @@ const QUESTIONS = (
         @test_throws Exception JSON.parse(replace(RESPONSE, "\"noul\":0.95" => "\"missing\":0.95"), TS.SystemOneResponse)
     end
 
+    @testset "Numeric response fields" begin
+        numeric_fields = (
+            ("urgent", TS.NoulAnswer, ("noul",)),
+            ("team", TS.ChoiceAnswer, ("confidence",)),
+            ("team", TS.ChoiceAnswer, ("probabilities", "billing")),
+            ("severity", TS.ScoreAnswer, ("score",)),
+            ("severity", TS.ScoreAnswer, ("confidence",)),
+            ("severity", TS.ScoreAnswer, ("probabilities", "0")),
+            (nothing, TS.Usage, ("input_tokens",)),
+            (nothing, TS.Usage, ("output_tokens",)),
+        )
+        for value in (false, true, 0, 1), (id, T, path) in numeric_fields
+            response = JSON.parse(RESPONSE)
+            object = id === nothing ? response["usage"] : response["answers"][id]
+            target = length(path) == 1 ? object : object[first(path)]
+            target[last(path)] = value
+            wire = JSON.json(object)
+            if value isa Bool
+                @test_throws ArgumentError JSON.parse(wire, T)
+                @test_throws ArgumentError JSON.parse(JSON.json(response), TS.SystemOneResponse)
+                id === nothing || @test_throws ArgumentError JSON.parse(wire, TS.Answer)
+            else
+                parsed = JSON.parse(wire, T)
+                field = getproperty(parsed, Symbol(first(path)))
+                @test (length(path) == 1 ? field : field[last(path)]) == value
+            end
+        end
+        @test_throws ArgumentError JSON.parse(
+            raw"""{"type":"choice","choice":"a","confidence":1,"probabilities":{"a":false,"a":1}}""",
+            TS.Answer)
+        response = JSON.parse(RESPONSE)
+        response["answers"]["severity"]["legend"]["0"] = Dict("enabled" => false)
+        result = JSON.parse(JSON.json(response), TS.SystemOneResponse)
+        @test result.answers["severity"].legend["0"]["enabled"] === false
+        request = TS.SystemOneRequest(;
+            state=(enabled=true,),
+            questions=(q=TS.Choice(; instructions=(enabled=false,),
+                criteria=Dict("yes" => Dict("enabled" => true))),))
+        wire = JSON.parse(JSON.json(request))
+        @test wire["state"]["enabled"] === true
+        @test wire["questions"]["q"]["instructions"]["enabled"] === false
+        @test wire["questions"]["q"]["criteria"]["yes"]["enabled"] === true
+    end
+
     @testset "Validation and scopes" begin
         @test_throws ArgumentError TS.Client("")
         @test_throws ArgumentError TS.Client("key\ninvalid")
@@ -80,6 +124,7 @@ const QUESTIONS = (
     @testset "HTTP contract" begin
         requests = Channel{HTTP.Request}(32)
         status = Ref(200)
+        response_body = Ref(RESPONSE)
         server = HTTP.serve!("127.0.0.1", 0; listenany=true) do req
             put!(requests, req)
             if status[] != 200
@@ -88,7 +133,7 @@ const QUESTIONS = (
             elseif req.target == "/v1/models"
                 return HTTP.Response(200, """{"models":[{"name":"jev-test","description":"Test model","release_date":"2026-09-16"}]}""")
             end
-            return HTTP.Response(200, RESPONSE)
+            return HTTP.Response(200, response_body[])
         end
         client = TS.Client("test-key"; base_url="http://$(HTTP.server_addr(server))/")
         try
@@ -122,6 +167,19 @@ const QUESTIONS = (
                 @test take!(requests).target == "/v1/systemone"
                 @test take!(requests).target == "/v1/models"
             end
+            response_body[] = replace(RESPONSE,
+                "\"noul\":0.95" => "\"noul\":false",
+                "jev-test" => "private-fixture-marker")
+            err = try
+                TS.system_one(client; state="x", questions=QUESTIONS)
+            catch ex
+                ex
+            end
+            @test err isa ArgumentError
+            @test !occursin("private-fixture-marker", sprint(showerror, err))
+            @test take!(requests).target == "/v1/systemone"
+            @test !isready(requests)
+            response_body[] = RESPONSE
             for code in (401, 422, 429, 529, 302)
                 status[] = code
                 err = try
